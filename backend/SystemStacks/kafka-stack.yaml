@@ -4,6 +4,7 @@ label: Kafka Development Stack
 description: Kafka broker, Zookeeper, and Kafka UI for local messaging development
 services:
   - name: zookeeper
+    code: zookeeper
     image: confluentinc/cp-zookeeper:7.2.1
     ports:
       - "2181:2181"
@@ -12,6 +13,7 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
 
   - name: kafka
+    code: kafka
     image: confluentinc/cp-kafka:7.2.1
     ports:
       - "9092:9092"
@@ -24,6 +26,7 @@ services:
       - zookeeper
 
   - name: kafka-ui
+    code: kafkaui
     image: provectuslabs/kafka-ui:latest
     ports:
       - "8085:8080"

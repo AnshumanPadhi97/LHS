@@ -13,6 +13,7 @@ type StackTemplate struct {
 
 type ServiceConfig struct {
 	Name      string            `yaml:"name"`
+	Code      string            `yaml:"code"`
 	Image     string            `yaml:"image,omitempty"` // optional if build is provided
 	Build     *BuildConfig      `yaml:"build,omitempty"` // optional if image is provided
 	Ports     []string          `yaml:"ports,omitempty"` // "host:container"

@@ -3,8 +3,8 @@ package docker
 import (
 	"LHS/backend/models"
 	"context"
+	"fmt"
 	"io"
-	"os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -31,8 +31,8 @@ func CloseClient() error {
 
 //CONTAINERS HANDLING
 
-func CreateContainer(options container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *v1.Platform, containerName string) (container.CreateResponse, error) {
-	return cli.ContainerCreate(context.Background(), &options, hostConfig, networkingConfig, platform, containerName)
+func CreateContainer(options *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *v1.Platform, containerName string) (container.CreateResponse, error) {
+	return cli.ContainerCreate(context.Background(), options, hostConfig, networkingConfig, platform, containerName)
 }
 
 func DeleteContainer(containerID string, options container.RemoveOptions) error {
@@ -65,17 +65,18 @@ func DeleteImage(imageId string, options image.RemoveOptions) ([]image.DeleteRes
 	return cli.ImageRemove(context.Background(), imageId, options)
 }
 
-func BuildImage(svc models.ServiceConfig, options types.ImageBuildOptions) error {
+func BuildImage(svc models.ServiceConfig, imageBuildOptions types.ImageBuildOptions) error {
+	if svc.Build == nil {
+		return fmt.Errorf("build config is nil for service: %s", svc.Name)
+	}
 	buildCtx, err := archive.TarWithOptions(svc.Build.Context, &archive.TarOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to tar build context: %w", err)
 	}
-	buildResp, err := cli.ImageBuild(context.Background(), buildCtx, options)
+	res, err := cli.ImageBuild(context.Background(), buildCtx, imageBuildOptions)
 	if err != nil {
-		return err
+		return fmt.Errorf("image build failed: %w", err)
 	}
-	defer buildResp.Body.Close()
-	io.Copy(os.Stdout, buildResp.Body)
-	svc.Image = svc.Name + ":latest"
+	res.Body.Close()
 	return nil
 }
