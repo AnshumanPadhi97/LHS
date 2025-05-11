@@ -1,13 +1,17 @@
 package docker
 
 import (
+	"LHS/backend/models"
 	"context"
 	"io"
+	"os"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/moby/go-archive"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -59,4 +63,19 @@ func PullImage(refStr string, options image.PullOptions) (io.ReadCloser, error) 
 
 func DeleteImage(imageId string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
 	return cli.ImageRemove(context.Background(), imageId, options)
+}
+
+func BuildImage(svc models.ServiceConfig, options types.ImageBuildOptions) error {
+	buildCtx, err := archive.TarWithOptions(svc.Build.Context, &archive.TarOptions{})
+	if err != nil {
+		return err
+	}
+	buildResp, err := cli.ImageBuild(context.Background(), buildCtx, options)
+	if err != nil {
+		return err
+	}
+	defer buildResp.Body.Close()
+	io.Copy(os.Stdout, buildResp.Body)
+	svc.Image = svc.Name + ":latest"
+	return nil
 }
