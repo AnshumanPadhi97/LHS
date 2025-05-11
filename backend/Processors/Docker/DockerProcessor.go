@@ -2,7 +2,7 @@ package docker
 
 import (
 	"context"
-	"fmt"
+	"io"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -13,74 +13,50 @@ import (
 
 var cli *client.Client
 
-func InitDockerClient() {
+//MANAGE CLIENT
+
+func InitDockerClient() error {
 	var err error
 	cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		fmt.Println("InitDockerClient : " + err.Error())
-	}
+	return err
 }
 
-func CloseClient() {
-	cli.Close()
+func CloseClient() error {
+	return cli.Close()
 }
 
-func ListContainers(options container.ListOptions) []container.Summary {
-	if cli == nil {
-		return nil
-	}
-	containers, err := cli.ContainerList(context.Background(), options)
-	if err != nil {
-		fmt.Println("ListContainers : " + err.Error())
-		return nil
-	}
-	return containers
+//CONTAINERS HANDLING
+
+func CreateContainer(options container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *v1.Platform, containerName string) (container.CreateResponse, error) {
+	return cli.ContainerCreate(context.Background(), &options, hostConfig, networkingConfig, platform, containerName)
 }
 
-func ListImages(options image.ListOptions) []image.Summary {
-	if cli == nil {
-		return nil
-	}
-	images, err := cli.ImageList(context.Background(), options)
-	if err != nil {
-		fmt.Println("ListImages : " + err.Error())
-		return nil
-	}
-	return images
+func DeleteContainer(containerID string, options container.RemoveOptions) error {
+	return cli.ContainerRemove(context.Background(), containerID, options)
 }
 
-func CreateContainer(options container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *v1.Platform, containerName string) string {
-	if cli == nil {
-		return ""
-	}
-	res, err := cli.ContainerCreate(context.Background(), &options, hostConfig, networkingConfig, platform, containerName)
-	if err != nil {
-		fmt.Println("CreateContainer : " + err.Error())
-		return ""
-	}
-	return res.ID
+func ListContainers(options container.ListOptions) ([]container.Summary, error) {
+	return cli.ContainerList(context.Background(), options)
 }
 
-func RunContainer(containerId string, options container.StartOptions) string {
-	if cli == nil {
-		return ""
-	}
-	err := cli.ContainerStart(context.Background(), containerId, options)
-	if err != nil {
-		fmt.Println("RunContainer : " + err.Error())
-		return ""
-	}
-	return "container running"
+func RunContainer(containerId string, options container.StartOptions) error {
+	return cli.ContainerStart(context.Background(), containerId, options)
 }
 
-func StopContainer(containerId string, options container.StopOptions) string {
-	if cli == nil {
-		return ""
-	}
-	err := cli.ContainerStop(context.Background(), containerId, options)
-	if err != nil {
-		fmt.Println("StopContainer : " + err.Error())
-		return ""
-	}
-	return "container stopped"
+func StopContainer(containerId string, options container.StopOptions) error {
+	return cli.ContainerStop(context.Background(), containerId, options)
+}
+
+//IMAGES HANDLING
+
+func ListImages(options image.ListOptions) ([]image.Summary, error) {
+	return cli.ImageList(context.Background(), options)
+}
+
+func PullImage(refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	return cli.ImagePull(context.Background(), refStr, options)
+}
+
+func DeleteImage(imageId string, options image.RemoveOptions) ([]image.DeleteResponse, error) {
+	return cli.ImageRemove(context.Background(), imageId, options)
 }
