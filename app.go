@@ -33,14 +33,14 @@ func (a *App) shutdown(ctx context.Context) {
 	_ = docker.CloseClient()
 }
 
-func (a *App) BuildStackFromYaml(yamlContent string) error {
-	tmpl, err := models.ParseStackYAML([]byte(yamlContent))
+func (a *App) BuildStack(content string) error {
+	tmpl, err := models.ParseStackYAML([]byte(content))
 	if err != nil {
 		return err
 	}
 	return backend.BuildStack(tmpl)
 }
 
-func (a *App) RunStackByName(stackID int64) error {
+func (a *App) RunStackById(stackID int64) error {
 	return backend.RunStack(stackID)
 }
