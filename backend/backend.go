@@ -86,6 +86,8 @@ func BuildStack(tmpl *models.StackTemplate) error {
 		}
 
 		// Create Container
+		containerName := "Container-" + svc.Name + "-" + uuid.NewString()
+
 		resp, err := docker.CreateContainer(
 			&container.Config{
 				Image:        imageName,
@@ -96,7 +98,7 @@ func BuildStack(tmpl *models.StackTemplate) error {
 				PortBindings: portMap,
 				Mounts:       mountsList,
 			},
-			&network.NetworkingConfig{}, nil, "Container-"+svc.Name+"-"+uuid.NewString())
+			&network.NetworkingConfig{}, nil, containerName)
 
 		if err != nil {
 			return fmt.Errorf("error creating container %s: %w", svc.Name, err)
@@ -107,7 +109,7 @@ func BuildStack(tmpl *models.StackTemplate) error {
 			INSERT INTO stack_services 
 			(stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			stackID, resp.ID, svc.Name, imageName, svc.BuildPath, svc.BuildDockerfile,
+			stackID, containerName, svc.Name, imageName, svc.BuildPath, svc.BuildDockerfile,
 			strings.Join(svc.Ports, ","),
 			encodeEnv(svc.Env),
 			strings.Join(svc.Volumes, ","),
@@ -117,6 +119,33 @@ func BuildStack(tmpl *models.StackTemplate) error {
 		}
 
 		fmt.Printf("Service %s started as container %s\n", svc.Name, resp.ID)
+	}
+
+	return nil
+}
+
+func RunStack(stackID int64) error {
+	rows, err := db.DB.Query("SELECT container_id FROM stack_services WHERE stack_id = ?", stackID)
+	if err != nil {
+		return fmt.Errorf("failed to query services for stack %d: %w", stackID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var containerName string
+		if err := rows.Scan(&containerName); err != nil {
+			return fmt.Errorf("failed to scan container name: %w", err)
+		}
+
+		err := docker.RunContainer(containerName, container.StartOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to start container %s: %w", containerName, err)
+		}
+
+		fmt.Printf("Started container: %s\n", containerName)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error reading rows: %w", err)
 	}
 
 	return nil
