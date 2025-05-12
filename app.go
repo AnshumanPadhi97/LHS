@@ -1,8 +1,12 @@
 package main
 
 import (
+	"LHS/backend"
+	docker "LHS/backend/Processors/Docker"
+	"LHS/backend/Processors/db"
+	"LHS/backend/models"
 	"context"
-	"fmt"
+	"log"
 )
 
 // App struct
@@ -15,13 +19,28 @@ func NewApp() *App {
 	return &App{}
 }
 
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if err := db.InitDB(); err != nil {
+		log.Fatalf("Failed to init DB: %v", err)
+	}
+	if err := docker.InitDockerClient(); err != nil {
+		log.Fatalf("Failed to init Docker client: %v", err)
+	}
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+func (a *App) shutdown(ctx context.Context) {
+	_ = docker.CloseClient()
+}
+
+func (a *App) BuildStackFromYaml(yamlContent string) error {
+	tmpl, err := models.ParseStackYAML([]byte(yamlContent))
+	if err != nil {
+		return err
+	}
+	return backend.BuildStack(tmpl)
+}
+
+func (a *App) RunStackByName(stackID int64) error {
+	return backend.RunStack(stackID)
 }

@@ -150,3 +150,11 @@ func RunStack(stackID int64) error {
 
 	return nil
 }
+
+func encodeEnv(env map[string]string) string {
+	var parts []string
+	for k, v := range env {
+		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+	}
+	return strings.Join(parts, ",")
+}
