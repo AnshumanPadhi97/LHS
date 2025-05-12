@@ -2,6 +2,7 @@ package backend
 
 import (
 	docker "LHS/backend/Processors/Docker"
+	"LHS/backend/Processors/db"
 	"LHS/backend/models"
 	"fmt"
 	"strings"
@@ -11,28 +12,39 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
+	"github.com/google/uuid"
 )
 
 //STACK CONTROLS
 
 func BuildStack(tmpl *models.StackTemplate) error {
+	//save stack data
+	res, err := db.DB.Exec("INSERT INTO stacks (name) VALUES (?)", tmpl.Name)
+	if err != nil {
+		return fmt.Errorf("failed to insert stack: %w", err)
+	}
+
+	stackID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get stack ID: %w", err)
+	}
+
 	for _, svc := range tmpl.Services {
 		imageName := svc.Image
 
-		//Build or pull image
-		if svc.Build != nil {
-			//TODO
-			//make - image build options settings available to user
+		//Build image
+		if svc.BuildPath != "" && svc.BuildDockerfile != "" {
+			imgName := svc.Name + "-" + uuid.New().String()
 			buildOptions := types.ImageBuildOptions{
-				Dockerfile: svc.Build.Dockerfile,
-				Tags:       []string{svc.Code},
+				Dockerfile: svc.BuildDockerfile,
+				Tags:       []string{imgName},
 				Remove:     true,
 			}
 			err := docker.BuildImage(svc, buildOptions)
 			if err != nil {
 				return fmt.Errorf("build failed for %s: %w", svc.Name, err)
 			}
-			imageName = svc.Code
+			imageName = imgName
 		}
 
 		// Env
@@ -84,14 +96,27 @@ func BuildStack(tmpl *models.StackTemplate) error {
 				PortBindings: portMap,
 				Mounts:       mountsList,
 			},
-			&network.NetworkingConfig{}, nil, svc.Code)
+			&network.NetworkingConfig{}, nil, "Container-"+svc.Name+"-"+uuid.NewString())
 
 		if err != nil {
 			return fmt.Errorf("error creating container %s: %w", svc.Name, err)
 		}
 
-		//save created container id in db
-		//return resp.ID
+		// Save service to DB
+		_, err = db.DB.Exec(`
+			INSERT INTO stack_services 
+			(stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			stackID, resp.ID, svc.Name, imageName, svc.BuildPath, svc.BuildDockerfile,
+			strings.Join(svc.Ports, ","),
+			encodeEnv(svc.Env),
+			strings.Join(svc.Volumes, ","),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert service %s: %w", svc.Name, err)
+		}
+
+		fmt.Printf("Service %s started as container %s\n", svc.Name, resp.ID)
 	}
 
 	return nil

@@ -14,40 +14,34 @@ func InitDB() error {
 	if err != nil {
 		return err
 	}
-
+	_, err = DB.Exec("PRAGMA foreign_keys = ON;")
+	if err != nil {
+		return err
+	}
 	createTables := `
 	CREATE TABLE IF NOT EXISTS stacks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		code TEXT UNIQUE,
-		name TEXT,
-		label TEXT,
-		description TEXT,
-		version INTEGER,
-		tags TEXT,
-		volumes TEXT,
+		name TEXT UNIQUE,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
-
 	CREATE TABLE IF NOT EXISTS stack_services (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		stack_id INTEGER,
 		container_id TEXT,
-		stack_code TEXT,
 		name TEXT,
-		code TEXT,
 		image TEXT,
+		build_path TEXT,
+		build_dockerfile TEXT,
 		ports TEXT,
 		env TEXT,
 		volumes TEXT,
-		depends_on TEXT,
-		tunnel INTEGER,
-		build_context TEXT,
-		build_dockerfile TEXT,
-		FOREIGN KEY(stack_code) REFERENCES stacks(code)
+		FOREIGN KEY(stack_id) REFERENCES stacks(id) ON DELETE CASCADE
 	);`
 
 	_, err = DB.Exec(createTables)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }

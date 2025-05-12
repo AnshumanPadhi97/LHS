@@ -66,10 +66,7 @@ func DeleteImage(imageId string, options image.RemoveOptions) ([]image.DeleteRes
 }
 
 func BuildImage(svc models.ServiceConfig, imageBuildOptions types.ImageBuildOptions) error {
-	if svc.Build == nil {
-		return fmt.Errorf("build config is nil for service: %s", svc.Name)
-	}
-	buildCtx, err := archive.TarWithOptions(svc.Build.Context, &archive.TarOptions{})
+	buildCtx, err := archive.TarWithOptions(svc.BuildPath, &archive.TarOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to tar build context: %w", err)
 	}

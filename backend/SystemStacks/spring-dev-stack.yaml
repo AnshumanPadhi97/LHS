@@ -1,26 +1,16 @@
-code: springdevlocal
 name: spring-dev-local
-label: Spring Dev (Local Build)
-description: Build and run Spring Boot app from local folder with PostgreSQL and Redis
 services:
   - name: spring-app
-    code: springapp
-    build:
-      context: ./spring-boot-app
-      dockerfile: Dockerfile
+    path: ./spring-boot-app
+    dockerfile: Dockerfile
     ports:
       - "8080:8080"
     env:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/devdb
     volumes:
       - ./spring-boot-app:/app
-    depends_on:
-      - postgres
-      - redis
-    tunnel: true
 
   - name: postgres
-    code: postgres
     image: postgres:15
     ports:
       - "5432:5432"
@@ -32,16 +22,6 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   - name: redis
-    code: redis
     image: redis:alpine
     ports:
       - "6379:6379"
-
-volumes:
-  pgdata:
-
-tags:
-  - backend
-  - local
-  - build
-version: 1
