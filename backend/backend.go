@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
@@ -30,63 +31,24 @@ func BuildStack(tmpl *models.StackTemplate) error {
 	}
 
 	for _, svc := range tmpl.Services {
-		imageName := svc.Image
-
-		//Build image
-		if svc.BuildPath != "" && svc.BuildDockerfile != "" {
-			imgName := svc.Name + "-" + uuid.New().String()
-			buildOptions := types.ImageBuildOptions{
-				Dockerfile: svc.BuildDockerfile,
-				Tags:       []string{imgName},
-				Remove:     true,
-			}
-			err := docker.BuildImage(svc, buildOptions)
-			if err != nil {
-				return fmt.Errorf("build failed for %s: %w", svc.Name, err)
-			}
-			imageName = imgName
-		}
-
-		// Env
-		var envVars []string
-		for k, v := range svc.Env {
-			envVars = append(envVars, fmt.Sprintf("%s=%s", k, v))
-		}
-
-		//Ports
-		portSet := nat.PortSet{}
-		portMap := nat.PortMap{}
-		for _, port := range svc.Ports {
-			parts := strings.Split(port, ":")
-			if len(parts) != 2 {
-				return fmt.Errorf("invalid port format in %s", port)
-			}
-			hostPort := parts[0]
-			containerPort := parts[1]
-			portKey := nat.Port(containerPort + "/tcp")
-			portSet[portKey] = struct{}{}
-			portMap[portKey] = []nat.PortBinding{{
-				HostIP:   "0.0.0.0",
-				HostPort: hostPort,
-			}}
-		}
-
-		//Volumes
-		var mountsList []mount.Mount
-		for _, vol := range svc.Volumes {
-			parts := strings.Split(vol, ":")
-			if len(parts) != 2 {
-				return fmt.Errorf("invalid volume format in %s", vol)
-			}
-			mountsList = append(mountsList, mount.Mount{
-				Type:   mount.TypeBind,
-				Source: parts[0],
-				Target: parts[1],
-			})
-		}
-
-		// Create Container
 		containerName := "Container-" + svc.Name + "-" + uuid.NewString()
+
+		imageName, err := resolveImage(svc)
+		if err != nil {
+			return fmt.Errorf("failed to resolve image for %s: %w", svc.Name, err)
+		}
+
+		envVars := formatEnvVars(svc.Env)
+
+		portSet, portMap, err := mapPorts(svc.Ports)
+		if err != nil {
+			return fmt.Errorf("port mapping error in service %s: %w", svc.Name, err)
+		}
+
+		mounts, err := mapVolumes(svc.Volumes)
+		if err != nil {
+			return fmt.Errorf("volume mapping error in service %s: %w", svc.Name, err)
+		}
 
 		resp, err := docker.CreateContainer(
 			&container.Config{
@@ -96,7 +58,7 @@ func BuildStack(tmpl *models.StackTemplate) error {
 			},
 			&container.HostConfig{
 				PortBindings: portMap,
-				Mounts:       mountsList,
+				Mounts:       mounts,
 			},
 			&network.NetworkingConfig{}, nil, containerName)
 
@@ -104,36 +66,42 @@ func BuildStack(tmpl *models.StackTemplate) error {
 			return fmt.Errorf("error creating container %s: %w", svc.Name, err)
 		}
 
-		// Save service to DB
 		_, err = db.DB.Exec(`
 			INSERT INTO stack_services 
 			(stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			stackID, containerName, svc.Name, imageName, svc.BuildPath, svc.BuildDockerfile,
-			strings.Join(svc.Ports, ","),
-			encodeEnv(svc.Env),
-			strings.Join(svc.Volumes, ","),
-		)
+			strings.Join(svc.Ports, ","), encodeEnv(svc.Env), strings.Join(svc.Volumes, ","))
+
 		if err != nil {
 			return fmt.Errorf("failed to insert service %s: %w", svc.Name, err)
 		}
 
-		fmt.Printf("Service %s started as container %s\n", svc.Name, resp.ID)
+		fmt.Printf("✅ Stack '%s' | Service '%s' created as container '%s' (ID: '%s')\n", tmpl.Name, svc.Name, containerName, resp.ID)
 	}
+
+	fmt.Printf("✅ Stack '%s' ,successfully built", tmpl.Name)
 
 	return nil
 }
 
 func RunStack(stackID int64) error {
-	rows, err := db.DB.Query("SELECT container_id FROM stack_services WHERE stack_id = ?", stackID)
+	query := `
+		SELECT s.name AS stack_name, ss.name AS service_name, ss.container_id
+		FROM stack_services ss
+		JOIN stacks s ON ss.stack_id = s.id
+		WHERE ss.stack_id = ?
+	`
+	rows, err := db.DB.Query(query, stackID)
 	if err != nil {
 		return fmt.Errorf("failed to query services for stack %d: %w", stackID, err)
 	}
 	defer rows.Close()
+
 	for rows.Next() {
-		var containerName string
-		if err := rows.Scan(&containerName); err != nil {
-			return fmt.Errorf("failed to scan container name: %w", err)
+		var stackName, serviceName, containerName string
+		if err := rows.Scan(&stackName, &serviceName, &containerName); err != nil {
+			return fmt.Errorf("failed to scan service data: %w", err)
 		}
 
 		err := docker.RunContainer(containerName, container.StartOptions{})
@@ -141,7 +109,7 @@ func RunStack(stackID int64) error {
 			return fmt.Errorf("failed to start container %s: %w", containerName, err)
 		}
 
-		fmt.Printf("Started container: %s\n", containerName)
+		fmt.Printf("🟢 Stack: %s | Service: %s | Container: %s started successfully\n", stackName, serviceName, containerName)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -149,6 +117,74 @@ func RunStack(stackID int64) error {
 	}
 
 	return nil
+}
+
+func resolveImage(svc models.ServiceConfig) (string, error) {
+
+	if svc.Image != "" {
+		if _, err := docker.PullImage(svc.Image, image.PullOptions{}); err != nil {
+			return "", fmt.Errorf("failed to pull image %s: %w", svc.Image, err)
+		}
+		return svc.Image, nil
+	}
+
+	if svc.BuildPath != "" && svc.BuildDockerfile != "" {
+		imageTag := svc.Name + "-" + uuid.NewString()
+		opts := types.ImageBuildOptions{
+			Dockerfile: svc.BuildDockerfile,
+			Tags:       []string{imageTag},
+			Remove:     true,
+		}
+		if err := docker.BuildImage(svc, opts); err != nil {
+			return "", fmt.Errorf("build failed: %w", err)
+		}
+		return imageTag, nil
+	}
+
+	return "", fmt.Errorf("no image or build configuration provided")
+}
+
+func formatEnvVars(env map[string]string) []string {
+	var vars []string
+	for k, v := range env {
+		vars = append(vars, fmt.Sprintf("%s=%s", k, v))
+	}
+	return vars
+}
+
+func mapPorts(ports []string) (nat.PortSet, nat.PortMap, error) {
+	portSet := nat.PortSet{}
+	portMap := nat.PortMap{}
+	for _, p := range ports {
+		parts := strings.Split(p, ":")
+		if len(parts) != 2 {
+			return nil, nil, fmt.Errorf("invalid port format: %s", p)
+		}
+		hostPort, containerPort := parts[0], parts[1]
+		portKey := nat.Port(containerPort + "/tcp")
+		portSet[portKey] = struct{}{}
+		portMap[portKey] = []nat.PortBinding{{
+			HostIP:   "0.0.0.0",
+			HostPort: hostPort,
+		}}
+	}
+	return portSet, portMap, nil
+}
+
+func mapVolumes(vols []string) ([]mount.Mount, error) {
+	var mounts []mount.Mount
+	for _, v := range vols {
+		parts := strings.Split(v, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid volume format: %s", v)
+		}
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: parts[0],
+			Target: parts[1],
+		})
+	}
+	return mounts, nil
 }
 
 func encodeEnv(env map[string]string) string {

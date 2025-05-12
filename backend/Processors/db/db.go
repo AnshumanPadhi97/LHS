@@ -37,11 +37,9 @@ func InitDB() error {
 		volumes TEXT,
 		FOREIGN KEY(stack_id) REFERENCES stacks(id) ON DELETE CASCADE
 	);`
-
 	_, err = DB.Exec(createTables)
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
