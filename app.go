@@ -9,6 +9,8 @@ import (
 	"log"
 )
 
+//WAILS
+
 // App struct
 type App struct {
 	ctx context.Context
@@ -32,6 +34,8 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	_ = docker.CloseClient()
 }
+
+// BACKEND MANAGEMENT
 
 func (a *App) BuildStack(content string) error {
 	tmpl, err := models.ParseStackYAML([]byte(content))
