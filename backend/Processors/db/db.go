@@ -86,6 +86,11 @@ func DeleteStack(id int64) error {
 	return err
 }
 
+func UpdateStack(id int64, newName string) error {
+	_, err := DB.Exec("UPDATE stacks SET name = ? WHERE id = ?", newName, id)
+	return err
+}
+
 //STACK SERVICE CRUD
 
 func CreateStackService(svc StackService) error {
@@ -127,5 +132,26 @@ func DeleteServicesByStackID(stackID int64) error {
 
 func DeleteServiceByID(serviceID int64) error {
 	_, err := DB.Exec("DELETE FROM stack_services WHERE id = ?", serviceID)
+	return err
+}
+
+func UpdateService(svc StackService) error {
+	_, err := DB.Exec(`
+		UPDATE stack_services 
+		SET 
+			stack_id = ?, 
+			container_id = ?, 
+			name = ?, 
+			image = ?, 
+			build_path = ?, 
+			build_dockerfile = ?, 
+			ports = ?, 
+			env = ?, 
+			volumes = ?
+		WHERE id = ?`,
+		svc.StackID, svc.ContainerID, svc.Name, svc.Image,
+		svc.BuildPath, svc.BuildDockerfile, svc.Ports, svc.Env, svc.Volumes,
+		svc.ID,
+	)
 	return err
 }
