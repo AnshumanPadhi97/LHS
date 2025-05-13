@@ -9,12 +9,12 @@ type StackTemplate struct {
 
 type ServiceConfig struct {
 	Name            string            `yaml:"name"`
-	Image           string            `yaml:"image,omitempty"`
+	Image           string            `yaml:"image"`
 	BuildPath       string            `yaml:"path"`
 	BuildDockerfile string            `yaml:"dockerfile"`
-	Ports           []string          `yaml:"ports,omitempty"` // "host:container"
-	Env             map[string]string `yaml:"env,omitempty"`
-	Volumes         []string          `yaml:"volumes,omitempty"` // hostPath:containerPath
+	Ports           []string          `yaml:"ports"`
+	Env             map[string]string `yaml:"env"`
+	Volumes         []string          `yaml:"volumes"`
 }
 
 func ParseStackYAML(data []byte) (*StackTemplate, error) {

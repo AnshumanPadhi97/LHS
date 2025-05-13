@@ -18,16 +18,53 @@ import (
 
 //STACK CONTROLS
 
-func BuildStack(tmpl *models.StackTemplate) error {
-	//save stack data
-	res, err := db.DB.Exec("INSERT INTO stacks (name) VALUES (?)", tmpl.Name)
+func CleanupAll() error {
+	// Step 1: Stop and remove all stack containers
+	services, err := db.GetAllServices()
 	if err != nil {
-		return fmt.Errorf("failed to insert stack: %w", err)
+		return fmt.Errorf("failed to retrieve services: %w", err)
 	}
 
-	stackID, err := res.LastInsertId()
+	for _, svc := range services {
+		fmt.Printf("🧹 Removing container: %s\n", svc.ContainerID)
+
+		// Stop
+		_ = docker.StopContainer(svc.ContainerID, container.StopOptions{})
+
+		// Remove
+		err := docker.DeleteContainer(svc.ContainerID, container.RemoveOptions{Force: true, RemoveVolumes: true, RemoveLinks: true})
+		if err != nil {
+			fmt.Printf("⚠️ Failed to remove container %s: %v\n", svc.ContainerID, err)
+		}
+	}
+
+	// Step 2: Remove images
+	imageIDs := map[string]bool{}
+	for _, svc := range services {
+		if svc.Image != "" && !imageIDs[svc.Image] {
+			fmt.Printf("🧹 Removing image: %s\n", svc.Image)
+			_, err := docker.DeleteImage(svc.Image, image.RemoveOptions{Force: true, PruneChildren: true})
+			if err != nil {
+				fmt.Printf("⚠️ Failed to remove image %s: %v\n", svc.Image, err)
+			}
+			imageIDs[svc.Image] = true
+		}
+	}
+
+	// Step 3: Clear DB
+	if err := db.DeleteAllStacks(); err != nil {
+		return fmt.Errorf("failed to delete stacks: %w", err)
+	}
+
+	fmt.Println("🧼 Cleanup complete: All containers, services, stacks removed.")
+	return nil
+}
+
+func BuildStack(tmpl *models.StackTemplate) error {
+	//save stack data
+	stackID, err := db.CreateStack(tmpl.Name)
 	if err != nil {
-		return fmt.Errorf("failed to get stack ID: %w", err)
+		return fmt.Errorf("failed to create stack: %w", err)
 	}
 
 	for _, svc := range tmpl.Services {
@@ -80,8 +117,71 @@ func BuildStack(tmpl *models.StackTemplate) error {
 		fmt.Printf("✅ Stack '%s' | Service '%s' created as container '%s' (ID: '%s')\n", tmpl.Name, svc.Name, containerName, resp.ID)
 	}
 
-	fmt.Printf("✅ Stack '%s' ,successfully built", tmpl.Name)
+	fmt.Printf("✅ Stack '%s', successfully built.", tmpl.Name)
 
+	return nil
+}
+
+func BuildStackFromDB(stackID int64) error {
+	stack, err := db.GetStackById(stackID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve stack: %w", err)
+	}
+
+	services, err := db.GetServicesByStackID(stackID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve services for stack: %w", err)
+	}
+
+	for _, svc := range services {
+		containerName := "Container-" + svc.Name + "-" + uuid.NewString()
+
+		imageName, err := resolveImageFromDB(svc)
+		if err != nil {
+			return fmt.Errorf("failed to resolve image for %s: %w", svc.Name, err)
+		}
+
+		envVars := strings.Split(svc.Env, ",")
+
+		portList := strings.Split(svc.Ports, ",")
+		portSet, portMap, err := mapPorts(portList)
+		if err != nil {
+			return fmt.Errorf("port mapping error in service %s: %w", svc.Name, err)
+		}
+
+		volList := strings.Split(svc.Volumes, ",")
+		mounts, err := mapVolumes(volList)
+		if err != nil {
+			return fmt.Errorf("volume mapping error in service %s: %w", svc.Name, err)
+		}
+
+		resp, err := docker.CreateContainer(
+			&container.Config{
+				Image:        imageName,
+				Env:          envVars,
+				ExposedPorts: portSet,
+			},
+			&container.HostConfig{
+				PortBindings: portMap,
+				Mounts:       mounts,
+			},
+			&network.NetworkingConfig{}, nil, containerName)
+
+		if err != nil {
+			return fmt.Errorf("error creating container %s: %w", svc.Name, err)
+		}
+
+		// Update container ID and container name in DB
+		svc.ContainerID = containerName
+		svc.Image = imageName
+		if err := db.UpdateService(svc); err != nil {
+			return fmt.Errorf("failed to update service record: %w", err)
+		}
+
+		fmt.Printf("✅ Stack '%s' | Service '%s' created as container '%s' (ID: '%s')\n", stack.Name, svc.Name, containerName, resp.ID)
+	}
+
+	fmt.Printf("✅ Stack '%s', successfully built.\n", stack.Name)
 	return nil
 }
 
@@ -120,7 +220,6 @@ func RunStack(stackID int64) error {
 }
 
 func resolveImage(svc models.ServiceConfig) (string, error) {
-
 	if svc.Image != "" {
 		if _, err := docker.PullImage(svc.Image, image.PullOptions{}); err != nil {
 			return "", fmt.Errorf("failed to pull image %s: %w", svc.Image, err)
@@ -136,6 +235,35 @@ func resolveImage(svc models.ServiceConfig) (string, error) {
 			Remove:     true,
 		}
 		if err := docker.BuildImage(svc, opts); err != nil {
+			return "", fmt.Errorf("build failed: %w", err)
+		}
+		return imageTag, nil
+	}
+
+	return "", fmt.Errorf("no image or build configuration provided")
+}
+
+func resolveImageFromDB(svc db.StackService) (string, error) {
+	if svc.Image != "" {
+		if _, err := docker.PullImage(svc.Image, image.PullOptions{}); err != nil {
+			return "", fmt.Errorf("failed to pull image %s: %w", svc.Image, err)
+		}
+		return svc.Image, nil
+	}
+
+	if svc.BuildPath != "" && svc.BuildDockerfile != "" {
+		imageTag := svc.Name + "-" + uuid.NewString()
+		opts := types.ImageBuildOptions{
+			Dockerfile: svc.BuildDockerfile,
+			Tags:       []string{imageTag},
+			Remove:     true,
+		}
+		modelSvc := models.ServiceConfig{
+			Name:            svc.Name,
+			BuildPath:       svc.BuildPath,
+			BuildDockerfile: svc.BuildDockerfile,
+		}
+		if err := docker.BuildImage(modelSvc, opts); err != nil {
 			return "", fmt.Errorf("build failed: %w", err)
 		}
 		return imageTag, nil

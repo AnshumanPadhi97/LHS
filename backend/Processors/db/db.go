@@ -91,6 +91,11 @@ func UpdateStack(id int64, newName string) error {
 	return err
 }
 
+func DeleteAllStacks() error {
+	_, err := DB.Exec("DELETE FROM stacks")
+	return err
+}
+
 //STACK SERVICE CRUD
 
 func CreateStackService(svc StackService) error {
@@ -154,4 +159,25 @@ func UpdateService(svc StackService) error {
 		svc.ID,
 	)
 	return err
+}
+
+func GetAllServices() ([]StackService, error) {
+	rows, err := DB.Query("SELECT id, stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes FROM stack_services")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var services []StackService
+	for rows.Next() {
+		var svc StackService
+		if err := rows.Scan(
+			&svc.ID, &svc.StackID, &svc.ContainerID, &svc.Name, &svc.Image,
+			&svc.BuildPath, &svc.BuildDockerfile, &svc.Ports, &svc.Env, &svc.Volumes,
+		); err != nil {
+			return nil, err
+		}
+		services = append(services, svc)
+	}
+	return services, rows.Err()
 }
