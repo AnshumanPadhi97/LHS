@@ -45,6 +45,14 @@ func (a *App) BuildStack(content string) error {
 	return backend.BuildStack(tmpl)
 }
 
+func (a *App) BuildStackByStackId(stackId int64) error {
+	err := backend.BuildStackFromDB(stackId)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (a *App) RunStackById(stackID int64) error {
 	return backend.RunStack(stackID)
 }
