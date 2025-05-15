@@ -6,6 +6,14 @@ export function BuildStack(arg1) {
   return window['go']['main']['App']['BuildStack'](arg1);
 }
 
+export function BuildStackByStackId(arg1) {
+  return window['go']['main']['App']['BuildStackByStackId'](arg1);
+}
+
+export function GetAllStacks() {
+  return window['go']['main']['App']['GetAllStacks']();
+}
+
 export function RunStackById(arg1) {
   return window['go']['main']['App']['RunStackById'](arg1);
 }

@@ -4,6 +4,8 @@ type Stack struct {
 	ID        int64
 	Name      string
 	CreatedAt string
+	Status    string
+	LastRunAt string
 }
 
 type StackService struct {
@@ -17,4 +19,6 @@ type StackService struct {
 	Ports           string
 	Env             string
 	Volumes         string
+	Status          string
+	LastRunAt       string
 }

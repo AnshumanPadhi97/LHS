@@ -22,7 +22,9 @@ func InitDB() error {
 	CREATE TABLE IF NOT EXISTS stacks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT UNIQUE,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		status TEXT DEFAULT 'stopped',
+		last_run_at DATETIME
 	);
 	CREATE TABLE IF NOT EXISTS stack_services (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +37,8 @@ func InitDB() error {
 		ports TEXT,
 		env TEXT,
 		volumes TEXT,
+		status TEXT DEFAULT 'stopped',
+		last_run_at DATETIME,
 		FOREIGN KEY(stack_id) REFERENCES stacks(id) ON DELETE CASCADE
 	);`
 	_, err = DB.Exec(createTables)
@@ -56,7 +60,7 @@ func CreateStack(name string) (int64, error) {
 
 func GetStackById(id int64) (*Stack, error) {
 	var stack Stack
-	err := DB.QueryRow("SELECT id, name, created_at FROM stacks WHERE id = ?", id).Scan(&stack.ID, &stack.Name, &stack.CreatedAt)
+	err := DB.QueryRow("SELECT id, name, created_at, status, last_run_at FROM stacks WHERE id = ?", id).Scan(&stack.ID, &stack.Name, &stack.CreatedAt, &stack.Status, &stack.LastRunAt)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +68,7 @@ func GetStackById(id int64) (*Stack, error) {
 }
 
 func GetAllStacks() ([]Stack, error) {
-	rows, err := DB.Query("SELECT id, name, created_at FROM stacks ORDER BY created_at DESC")
+	rows, err := DB.Query("SELECT id, name, created_at, status, last_run_at FROM stacks ORDER BY last_run_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +77,7 @@ func GetAllStacks() ([]Stack, error) {
 	var stacks []Stack
 	for rows.Next() {
 		var s Stack
-		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.CreatedAt, &s.Status, &s.LastRunAt); err != nil {
 			return nil, err
 		}
 		stacks = append(stacks, s)
@@ -86,7 +90,7 @@ func DeleteStack(id int64) error {
 	return err
 }
 
-func UpdateStack(id int64, newName string) error {
+func UpdateStackName(id int64, newName string) error {
 	_, err := DB.Exec("UPDATE stacks SET name = ? WHERE id = ?", newName, id)
 	return err
 }
@@ -110,7 +114,7 @@ func CreateStackService(svc StackService) error {
 }
 
 func GetServicesByStackID(stackID int64) ([]StackService, error) {
-	rows, err := DB.Query("SELECT id, stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes FROM stack_services WHERE stack_id = ?", stackID)
+	rows, err := DB.Query("SELECT id, stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes, status, last_run_at FROM stack_services WHERE stack_id = ?", stackID)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +125,7 @@ func GetServicesByStackID(stackID int64) ([]StackService, error) {
 		var svc StackService
 		if err := rows.Scan(
 			&svc.ID, &svc.StackID, &svc.ContainerID, &svc.Name, &svc.Image,
-			&svc.BuildPath, &svc.BuildDockerfile, &svc.Ports, &svc.Env, &svc.Volumes,
+			&svc.BuildPath, &svc.BuildDockerfile, &svc.Ports, &svc.Env, &svc.Volumes, &svc.Status, &svc.LastRunAt,
 		); err != nil {
 			return nil, err
 		}
@@ -162,7 +166,7 @@ func UpdateService(svc StackService) error {
 }
 
 func GetAllServices() ([]StackService, error) {
-	rows, err := DB.Query("SELECT id, stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes FROM stack_services")
+	rows, err := DB.Query("SELECT id, stack_id, container_id, name, image, build_path, build_dockerfile, ports, env, volumes, status, last_run_at FROM stack_services")
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +178,7 @@ func GetAllServices() ([]StackService, error) {
 		if err := rows.Scan(
 			&svc.ID, &svc.StackID, &svc.ContainerID, &svc.Name, &svc.Image,
 			&svc.BuildPath, &svc.BuildDockerfile, &svc.Ports, &svc.Env, &svc.Volumes,
+			&svc.Status, &svc.LastRunAt,
 		); err != nil {
 			return nil, err
 		}

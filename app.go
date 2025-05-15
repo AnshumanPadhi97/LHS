@@ -56,3 +56,7 @@ func (a *App) BuildStackByStackId(stackId int64) error {
 func (a *App) RunStackById(stackID int64) error {
 	return backend.RunStack(stackID)
 }
+
+func (a *App) GetAllStacks() []models.StackUIDto {
+	return backend.GetAllStacks()
+}

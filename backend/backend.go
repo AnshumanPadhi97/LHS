@@ -186,8 +186,11 @@ func BuildStackFromDB(stackID int64) error {
 }
 
 func RunStack(stackID int64) error {
+
+	fmt.Printf("🟢 Stack Initialising.....\n")
+
 	query := `
-		SELECT s.name AS stack_name, ss.name AS service_name, ss.container_id
+		SELECT s.name AS stack_name, ss.name AS service_name, ss.container_id, ss.id
 		FROM stack_services ss
 		JOIN stacks s ON ss.stack_id = s.id
 		WHERE ss.stack_id = ?
@@ -200,7 +203,8 @@ func RunStack(stackID int64) error {
 
 	for rows.Next() {
 		var stackName, serviceName, containerName string
-		if err := rows.Scan(&stackName, &serviceName, &containerName); err != nil {
+		var serviceId int
+		if err := rows.Scan(&stackName, &serviceName, &containerName, &serviceId); err != nil {
 			return fmt.Errorf("failed to scan service data: %w", err)
 		}
 
@@ -209,6 +213,11 @@ func RunStack(stackID int64) error {
 			return fmt.Errorf("failed to start container %s: %w", containerName, err)
 		}
 
+		_, _ = db.DB.Exec(`
+		UPDATE stack_services 
+		SET status = 'running', last_run_at = CURRENT_TIMESTAMP 
+		WHERE id = ?`, serviceId)
+
 		fmt.Printf("🟢 Stack: %s | Service: %s | Container: %s started successfully\n", stackName, serviceName, containerName)
 	}
 
@@ -216,6 +225,43 @@ func RunStack(stackID int64) error {
 		return fmt.Errorf("error reading rows: %w", err)
 	}
 
+	_, _ = db.DB.Exec(`
+	UPDATE stacks 
+	SET status = 'running', last_run_at = CURRENT_TIMESTAMP 
+	WHERE id = ?`, stackID)
+
+	fmt.Printf("🟢 Stack started successfully\n")
+
+	return nil
+}
+
+func StopStack(stackID int64) error {
+	services, err := db.GetServicesByStackID(stackID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve services: %w", err)
+	}
+
+	for _, svc := range services {
+		err := docker.StopContainer(svc.ContainerID, container.StopOptions{})
+		if err != nil {
+			fmt.Printf("⚠️ Failed to stop container %s: %v\n", svc.ContainerID, err)
+			continue
+		}
+
+		_, err = db.DB.Exec("UPDATE stack_services SET status = ? WHERE id = ?", "stopped", svc.ID)
+		if err != nil {
+			return fmt.Errorf("failed to update service status: %w", err)
+		}
+
+		fmt.Printf("🛑 Stopped container: %s\n", svc.ContainerID)
+	}
+
+	_, err = db.DB.Exec("UPDATE stacks SET status = ? WHERE id = ?", "stopped", stackID)
+	if err != nil {
+		return fmt.Errorf("failed to update stack status: %w", err)
+	}
+
+	fmt.Printf("🛑 Stack %d stopped.\n", stackID)
 	return nil
 }
 
@@ -321,4 +367,26 @@ func encodeEnv(env map[string]string) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, v))
 	}
 	return strings.Join(parts, ",")
+}
+
+func GetAllStacks() []models.StackUIDto {
+	var res []models.StackUIDto
+	stacks, err := db.GetAllStacks()
+	if err != nil {
+		return res
+	}
+	for _, st := range stacks {
+		services, err := db.GetServicesByStackID(st.ID)
+		if err != nil {
+			continue
+		}
+		res = append(res, models.StackUIDto{
+			Id:            int(st.ID),
+			Name:          st.Name,
+			Created_at:    st.CreatedAt,
+			Status:        st.Status,
+			Service_count: len(services),
+		})
+	}
+	return res
 }
